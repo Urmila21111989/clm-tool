@@ -18,13 +18,21 @@ async function streamToString(stream) {
   return Buffer.concat(chunks).toString('utf-8');
 }
 
-// Two prefixes inside one bucket stand in for "shared" and "personal" folders:
-//   shared/some-file.txt
-//   personal/some-file.txt
-async function pollPrefix(client, prefix, sourceLabel) {
+// Your bucket is organized by document type rather than "shared"/"personal" —
+// each folder here maps directly to the doc_type it should be saved as.
+const FOLDER_DOC_TYPES = {
+  'MSA/': 'MSA',
+  'SOW/': 'SOW',
+  'NDA/': 'NDA',
+  'Change Orders/': 'CHANGE_ORDER',
+  'Amendments/': 'AMENDMENT',
+};
+
+async function pollPrefix(client, prefix, docType) {
   const bucket = process.env.S3_BUCKET;
   const listed = await client.send(new ListObjectsV2Command({ Bucket: bucket, Prefix: prefix }));
   const objects = listed.Contents || [];
+  const sourceLabel = `s3_${docType.toLowerCase()}`;
 
   for (const obj of objects) {
     const key = obj.Key;
@@ -32,7 +40,7 @@ async function pollPrefix(client, prefix, sourceLabel) {
     if (!['.txt', '.md'].includes(ext)) continue; // PDFs/Word need extraction first
 
     const title = key.slice(prefix.length).replace(/\.(txt|md)$/i, '');
-    if (!title) continue;
+    if (!title) continue; // skip the folder marker itself
 
     const exists = await pool.query('SELECT 1 FROM contracts WHERE title = $1 AND source = $2', [title, sourceLabel]);
     if (exists.rows.length) continue; // already ingested
@@ -42,10 +50,10 @@ async function pollPrefix(client, prefix, sourceLabel) {
       const text = await streamToString(got.Body);
       await pool.query(
         `INSERT INTO contracts (doc_type, title, content_text, source, status, attributes)
-         VALUES ('UNKNOWN', $1, $2, $3, 'needs_review', '{}'::jsonb)`,
-        [title, text, sourceLabel]
+         VALUES ($1, $2, $3, $4, 'needs_review', '{}'::jsonb)`,
+        [docType, title, text, sourceLabel]
       );
-      console.log(`Ingested ${key} as an unclassified draft — set its type and link it to a parent from the dashboard.`);
+      console.log(`Ingested ${key} as a ${docType} draft — link it to a parent from the dashboard if it needs one.`);
     } catch (err) {
       console.error(`Couldn't ingest ${key}:`, err.message);
     }
@@ -61,8 +69,9 @@ function startBucketPolling() {
 
   const intervalMinutes = Number(process.env.BUCKET_POLL_MINUTES || 2);
   const run = () => {
-    pollPrefix(client, 'shared/', 'shared_folder').catch((err) => console.error('Shared prefix poll failed:', err.message));
-    pollPrefix(client, 'personal/', 'personal_folder').catch((err) => console.error('Personal prefix poll failed:', err.message));
+    Object.entries(FOLDER_DOC_TYPES).forEach(([prefix, docType]) => {
+      pollPrefix(client, prefix, docType).catch((err) => console.error(`Poll of "${prefix}" failed:`, err.message));
+    });
   };
 
   run();
