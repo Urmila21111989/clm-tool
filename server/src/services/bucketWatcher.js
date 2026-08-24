@@ -64,12 +64,25 @@ async function pollPrefix(client, prefix, docType) {
       const buffer = await streamToBuffer(got.Body);
       const text = await extractText(buffer, ext);
 
+      // S3 lowercases custom metadata keys automatically, so a key you
+      // named "Parent" when uploading shows up here as "parent".
+      let parentId = null;
+      const parentTitle = got.Metadata && got.Metadata.parent;
+      if (parentTitle) {
+        const { rows: parentRows } = await pool.query('SELECT id FROM contracts WHERE title = $1 LIMIT 1', [parentTitle]);
+        if (parentRows.length) {
+          parentId = parentRows[0].id;
+        } else {
+          console.log(`"${key}" named a parent ("${parentTitle}") that doesn't exist yet — saved without a parent link. Link it manually once the parent exists.`);
+        }
+      }
+
       await pool.query(
-        `INSERT INTO contracts (doc_type, title, content_text, source, status, attributes)
-         VALUES ($1, $2, $3, $4, 'needs_review', '{}'::jsonb)`,
-        [docType, title, text, sourceLabel]
+        `INSERT INTO contracts (doc_type, title, content_text, source, status, attributes, parent_id)
+         VALUES ($1, $2, $3, $4, 'needs_review', '{}'::jsonb, $5)`,
+        [docType, title, text, sourceLabel, parentId]
       );
-      console.log(`Ingested ${key} as a ${docType} draft — link it to a parent from the dashboard if it needs one.`);
+      console.log(`Ingested ${key} as a ${docType} draft${parentId ? ' with parent linked automatically' : ' — link it to a parent from the dashboard if it needs one'}.`);
     } catch (err) {
       console.error(`Couldn't ingest ${key}:`, err.message);
     }
