@@ -49,6 +49,11 @@ th{text-align:left; font-weight:500; color:var(--text-faint); font-size:11px; te
 td{padding:10px 10px; border-bottom:1px solid var(--border); vertical-align:top;}
 tr:last-child td{border-bottom:none;}
 .sla-near{color:var(--danger); font-weight:500;}
+.muted{color:var(--text-faint);}
+.parent-select{
+  background:var(--surface); border:1px solid var(--border); color:var(--text);
+  padding:5px 6px; border-radius:4px; font-size:12px; max-width:160px;
+}
 
 .stamp{
   display:inline-block; font-family:'Source Serif 4',serif; font-weight:600;
