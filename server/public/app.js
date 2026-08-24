@@ -14,10 +14,13 @@ document.querySelectorAll('.tab').forEach(tab => {
     document.getElementById('panel-' + tab.dataset.tab).classList.add('active');
     if (tab.dataset.tab === 'create') loadParentOptions();
     if (tab.dataset.tab === 'lineage') loadLineageOptions();
+    if (tab.dataset.tab === 'settings') loadFolderMappings();
   });
 });
 
 // ---- Ledger ----
+let allContractsCache = [];
+
 async function loadLedger() {
   const q = document.getElementById('ledgerSearch').value.trim();
   const type = document.getElementById('ledgerTypeFilter').value;
@@ -25,30 +28,54 @@ async function loadLedger() {
   if (q) params.set('q', q);
   if (type) params.set('doc_type', type);
 
-  const res = await fetch(`${API}?${params}`);
-  const rows = await res.json();
+  const [filteredRes, allRes] = await Promise.all([fetch(`${API}?${params}`), fetch(API)]);
+  const rows = await filteredRes.json();
+  allContractsCache = await allRes.json();
+
   const body = document.getElementById('ledgerBody');
   const empty = document.getElementById('ledgerEmpty');
 
   if (!rows.length) { body.innerHTML = ''; empty.style.display = 'block'; return; }
   empty.style.display = 'none';
 
-  const byId = {};
-  rows.forEach(r => byId[r.id] = r);
-
   body.innerHTML = rows.map(r => {
-    const parentTitle = r.parent_id && byId[r.parent_id] ? byId[r.parent_id].title : (r.parent_id ? '(linked)' : '—');
     const nearSla = r.sla_date && new Date(r.sla_date) < new Date(Date.now() + 7 * 86400000);
+    const allowedParentTypes = PARENT_ALLOWED[r.doc_type] || [];
+    const parentOptions = allContractsCache
+      .filter(c => allowedParentTypes.includes(c.doc_type) && c.id !== r.id)
+      .map(c => `<option value="${c.id}" ${c.id === r.parent_id ? 'selected' : ''}>${escapeHtml(c.title)} (${c.doc_type})</option>`)
+      .join('');
+    const parentControl = allowedParentTypes.length
+      ? `<select class="parent-select" id="parent-${r.id}"><option value="">None</option>${parentOptions}</select>
+         <button class="ghost" onclick="saveParent('${r.id}')">Save</button>`
+      : `<span class="muted">—</span>`;
+
     return `<tr>
       <td data-label="Type"><span class="stamp ${r.doc_type}">${abbrev(r.doc_type)}</span></td>
       <td data-label="Title">${escapeHtml(r.title)}</td>
-      <td data-label="Parent">${escapeHtml(parentTitle)}</td>
+      <td data-label="Parent">${parentControl}</td>
       <td data-label="Effective">${r.effective_date ? String(r.effective_date).slice(0, 10) : '—'}</td>
       <td data-label="SLA date" class="${nearSla ? 'sla-near' : ''}">${r.sla_date ? String(r.sla_date).slice(0, 10) : '—'}</td>
       <td data-label="Status">${escapeHtml(r.status)}</td>
       <td data-label=""><button class="ghost" onclick="deleteContract('${r.id}')">Delete</button></td>
     </tr>`;
   }).join('');
+}
+
+async function saveParent(id) {
+  const select = document.getElementById(`parent-${id}`);
+  const parentId = select.value || null;
+  const res = await fetch(`${API}/${id}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ parent_id: parentId }),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    alert(body.error || "Couldn't save that parent link — try again.");
+    return;
+  }
+  loadLedger();
 }
 
 async function deleteContract(id) {
@@ -163,7 +190,7 @@ document.getElementById('askBtn').addEventListener('click', async () => {
     <div class="ask-answer">Thinking…</div>
     <div class="ask-matches"></div>
   `;
-  history.prepend(entry); // newest question appears at the top
+  history.prepend(entry);
   document.getElementById('askInput').value = '';
 
   try {
@@ -176,6 +203,58 @@ document.getElementById('askBtn').addEventListener('click', async () => {
     entry.querySelector('.ask-answer').textContent = "Couldn't complete that search — " + err.message;
   }
 });
+
+// ---- Settings ----
+const MAPPINGS_API = '/api/folder-mappings';
+
+async function loadFolderMappings() {
+  const res = await fetch(MAPPINGS_API);
+  const mappings = await res.json();
+  const list = document.getElementById('mappingsList');
+
+  if (!mappings.length) {
+    list.innerHTML = '<p class="hint">No folder mappings yet — add one below.</p>';
+    return;
+  }
+
+  list.innerHTML = mappings.map(m => `
+    <div class="attr-row">
+      <span class="stamp ${m.doc_type}" style="flex:0;">${abbrev(m.doc_type)}</span>
+      <span style="flex:1; padding:0 10px;">${escapeHtml(m.prefix)}</span>
+      <button class="ghost" onclick="deleteFolderMapping('${m.id}')">Remove</button>
+    </div>
+  `).join('');
+}
+
+document.getElementById('addMappingBtn').addEventListener('click', async () => {
+  const errBox = document.getElementById('mappingError');
+  errBox.style.display = 'none';
+  const prefix = document.getElementById('m_prefix').value.trim();
+  const doc_type = document.getElementById('m_doc_type').value;
+
+  if (!prefix) { errBox.textContent = 'Enter a folder name first.'; errBox.style.display = 'block'; return; }
+
+  const res = await fetch(MAPPINGS_API, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ prefix, doc_type }),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    errBox.textContent = body.error || "Couldn't save that mapping — try again.";
+    errBox.style.display = 'block';
+    return;
+  }
+
+  document.getElementById('m_prefix').value = '';
+  loadFolderMappings();
+});
+
+async function deleteFolderMapping(id) {
+  if (!confirm('Stop watching this folder? Files already ingested from it will stay in the ledger.')) return;
+  await fetch(`${MAPPINGS_API}/${id}`, { method: 'DELETE' });
+  loadFolderMappings();
+}
 
 loadLedger();
 loadParentOptions();
