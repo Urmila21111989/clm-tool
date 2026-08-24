@@ -30,7 +30,19 @@ router.post('/', async (req, res) => {
       candidates = recent;
     }
 
-    if (candidates.length === 0) {
+    // Lightweight map of every contract's parent-child relationship — no
+    // document text, just enough for lineage questions ("what's under
+    // MSA3?", "which MSA does this SOW belong to?") to be answerable
+    // without a separate hardcoded feature for each question shape.
+    const { rows: allContracts } = await pool.query(
+      `SELECT id, doc_type, title, parent_id FROM contracts ORDER BY doc_type, title`
+    );
+    const idToTitle = Object.fromEntries(allContracts.map(c => [c.id, c.title]));
+    const relationshipMap = allContracts.map(c =>
+      `${c.doc_type} "${c.title}"${c.parent_id ? ` — child of "${idToTitle[c.parent_id] || 'unknown parent'}"` : ' — no parent'}`
+    ).join('\n');
+
+    if (candidates.length === 0 && allContracts.length === 0) {
       return res.json({ answer: 'There are no contracts in the ledger yet to search.', matched: [] });
     }
 
@@ -38,12 +50,15 @@ router.post('/', async (req, res) => {
       `Contract ${c.id} [${c.doc_type}] "${c.title}" — effective ${c.effective_date || 'unknown'}, SLA ${c.sla_date || 'none'}. Attributes: ${JSON.stringify(c.attributes)}. Text excerpt: ${(c.content_text || '').slice(0, 800)}`
     ).join('\n\n');
 
-    const prompt = `You are helping someone search their contract ledger. Answer the question using only information in the candidate contracts below. If nothing answers it, say so plainly rather than guessing. Reference contract titles when you use them.
+    const prompt = `You are helping someone search their contract ledger. Answer the question using the information below. If it's a question about relationships or hierarchy (which SOW belongs to which MSA, what's under a given contract, etc.), use the relationship map. If it's a question about content or terms, use the candidate contract excerpts. If nothing answers it, say so plainly rather than guessing.
 
-Question: ${query}
+Relationship map (every contract and its parent, if any):
+${relationshipMap || '(no contracts yet)'}
 
-Candidate contracts:
-${context}`;
+Candidate contract excerpts (may or may not be relevant to this specific question):
+${context || '(none matched)'}
+
+Question: ${query}`;
 
     const response = await fetch(
       `https://generativelanguage.googleapis.com/v1beta/models/${process.env.GEMINI_MODEL || 'gemini-2.5-flash'}:generateContent?key=${process.env.GEMINI_API_KEY}`,
