@@ -1,4 +1,5 @@
 const { S3Client, ListObjectsV2Command, GetObjectCommand } = require('@aws-sdk/client-s3');
+const pdfParse = require('pdf-parse');
 const pool = require('../db');
 
 function buildClient() {
@@ -12,10 +13,10 @@ function buildClient() {
   });
 }
 
-async function streamToString(stream) {
+async function streamToBuffer(stream) {
   const chunks = [];
   for await (const chunk of stream) chunks.push(chunk);
-  return Buffer.concat(chunks).toString('utf-8');
+  return Buffer.concat(chunks);
 }
 
 // Your bucket is organized by document type rather than "shared"/"personal" —
@@ -28,6 +29,16 @@ const FOLDER_DOC_TYPES = {
   'Amendments/': 'AMENDMENT',
 };
 
+const SUPPORTED_EXTENSIONS = ['.txt', '.md', '.pdf'];
+
+async function extractText(buffer, ext) {
+  if (ext === '.pdf') {
+    const parsed = await pdfParse(buffer);
+    return parsed.text;
+  }
+  return buffer.toString('utf-8');
+}
+
 async function pollPrefix(client, prefix, docType) {
   const bucket = process.env.S3_BUCKET;
   const listed = await client.send(new ListObjectsV2Command({ Bucket: bucket, Prefix: prefix }));
@@ -37,9 +48,12 @@ async function pollPrefix(client, prefix, docType) {
   for (const obj of objects) {
     const key = obj.Key;
     const ext = key.slice(key.lastIndexOf('.')).toLowerCase();
-    if (!['.txt', '.md'].includes(ext)) continue; // PDFs/Word need extraction first
+    if (!SUPPORTED_EXTENSIONS.includes(ext)) {
+      console.log(`Skipping ${key} — unsupported file type (only .txt, .md, and .pdf are read right now).`);
+      continue;
+    }
 
-    const title = key.slice(prefix.length).replace(/\.(txt|md)$/i, '');
+    const title = key.slice(prefix.length).replace(/\.(txt|md|pdf)$/i, '');
     if (!title) continue; // skip the folder marker itself
 
     const exists = await pool.query('SELECT 1 FROM contracts WHERE title = $1 AND source = $2', [title, sourceLabel]);
@@ -47,7 +61,9 @@ async function pollPrefix(client, prefix, docType) {
 
     try {
       const got = await client.send(new GetObjectCommand({ Bucket: bucket, Key: key }));
-      const text = await streamToString(got.Body);
+      const buffer = await streamToBuffer(got.Body);
+      const text = await extractText(buffer, ext);
+
       await pool.query(
         `INSERT INTO contracts (doc_type, title, content_text, source, status, attributes)
          VALUES ($1, $2, $3, $4, 'needs_review', '{}'::jsonb)`,
