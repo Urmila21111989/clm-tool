@@ -153,19 +153,27 @@ document.getElementById('lineageSelect').addEventListener('change', async (e) =>
 // ---- Ask ----
 document.getElementById('askBtn').addEventListener('click', async () => {
   const query = document.getElementById('askInput').value.trim();
-  const answerBox = document.getElementById('askAnswer');
-  const matchesBox = document.getElementById('askMatches');
+  const history = document.getElementById('askHistory');
   if (!query) return;
-  answerBox.textContent = 'Thinking…';
-  matchesBox.innerHTML = '';
+
+  const entry = document.createElement('div');
+  entry.className = 'ask-entry';
+  entry.innerHTML = `
+    <div class="ask-question">${escapeHtml(query)}</div>
+    <div class="ask-answer">Thinking…</div>
+    <div class="ask-matches"></div>
+  `;
+  history.prepend(entry);
+  document.getElementById('askInput').value = '';
+
   try {
     const res = await fetch('/api/search', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ query }) });
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || 'Search failed.');
-    answerBox.textContent = data.answer;
-    matchesBox.innerHTML = data.matched.map(m => `<span class="stamp ${m.doc_type}" style="margin:4px;">${abbrev(m.doc_type)}</span> ${escapeHtml(m.title)}`).join('<br>');
+    entry.querySelector('.ask-answer').textContent = data.answer;
+    entry.querySelector('.ask-matches').innerHTML = data.matched.map(m => `<span class="stamp ${m.doc_type}" style="margin:4px;">${abbrev(m.doc_type)}</span> ${escapeHtml(m.title)}`).join('<br>');
   } catch (err) {
-    answerBox.textContent = "Couldn't complete that search — " + err.message;
+    entry.querySelector('.ask-answer').textContent = "Couldn't complete that search — " + err.message;
   }
 });
 
