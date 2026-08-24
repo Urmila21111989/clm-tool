@@ -21,6 +21,7 @@
     <button class="tab" data-tab="create">Create</button>
     <button class="tab" data-tab="lineage">Lineage</button>
     <button class="tab" data-tab="ask">Ask</button>
+    <button class="tab" data-tab="settings">Settings</button>
   </nav>
 
   <section id="panel-ledger" class="panel active">
@@ -127,6 +128,34 @@
       <button id="askBtn" class="primary">Ask</button>
     </div>
     <div id="askHistory"></div>
+  </section>
+
+  <section id="panel-settings" class="panel">
+    <div class="attrs-block">
+      <div class="attrs-header">
+        <h3>S3 folder mappings</h3>
+      </div>
+      <p class="hint">Tell the ledger which folder in your S3 bucket corresponds to which document type. Add, edit, or remove these any time your bucket's folder structure changes — no code changes needed.</p>
+
+      <div id="mappingsList" style="margin-bottom:16px;"></div>
+
+      <div class="row" style="align-items:flex-end;">
+        <label style="flex:2;">Folder name (as it appears in S3)
+          <input id="m_prefix" type="text" placeholder="e.g. Amendment to MSA">
+        </label>
+        <label style="flex:1;">Maps to
+          <select id="m_doc_type">
+            <option value="NDA">NDA</option>
+            <option value="MSA">MSA</option>
+            <option value="SOW">SOW</option>
+            <option value="CHANGE_ORDER">Change order</option>
+            <option value="AMENDMENT">Amendment</option>
+          </select>
+        </label>
+        <button class="primary" id="addMappingBtn" style="height:38px;">Add mapping</button>
+      </div>
+      <div id="mappingError" class="error" style="display:none; margin-top:10px;"></div>
+    </div>
   </section>
 
 </div>
